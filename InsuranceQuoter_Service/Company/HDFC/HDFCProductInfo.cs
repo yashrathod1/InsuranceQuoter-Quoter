@@ -22,10 +22,6 @@ public class HDFCProductInfo : ProductInfoBase
     public override List<int> AllowedTerms => new() { 10, 15, 20, 25, 30, 35 };
     public override decimal MinimumFaceAmount => 100000;
     public override decimal MaximumFaceAmount => 100000000;
-    public override decimal? MinChildRiderAmount => 1000;
-    public override decimal? MaxChildRiderAmount => 25000;
-    public override bool SupportsWopRider => true;
-    public override bool SupportsAdbRider => true;
 
     #region GenerateCsv
     protected override async Task GenerateWopRateCsvAsync(IFormFile excelFile, string companyFolder)
@@ -201,4 +197,28 @@ public class HDFCProductInfo : ProductInfoBase
         => LoadRiderRateByAgeAsync("hdfc_adb_rates.csv", input.Age);
 
     #endregion
+
+    public override Dictionary<string, RiderRuleViewModel> RiderRules => new()
+    {
+        ["Waiver of Premium"] = new RiderRuleViewModel
+            {
+                RiderName = "Waiver of Premium",
+                IsAvailable = true,
+                MaxIssueAge = 65,
+            },
+            ["Child Rider"] = new RiderRuleViewModel
+            {
+                RiderName = "Child Rider",
+                IsAvailable = true,
+                MaxIssueAge = 55,
+                MinAmount = 1000,  
+                MaxAmount = 25000  
+            },
+            ["ADB Rider"] = new RiderRuleViewModel
+            {
+                RiderName = "ADB Rider",
+                IsAvailable = true,
+                MaxIssueAge = 55
+            }
+    };
 }

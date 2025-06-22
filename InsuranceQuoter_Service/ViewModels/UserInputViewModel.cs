@@ -4,8 +4,7 @@ namespace InsuranceQuoter_Service.ViewModels;
 
 public class UserInputViewModel
 {
-    [Required(ErrorMessage = "Company name is Required")]
-    public string CompanyName { get; set; } = null!;
+    public string CompanyName { get; set; } = string.Empty; 
 
     [Required(ErrorMessage = "DateofBirth is Required")]
     public DateOnly DateOfBirth { get; set; }

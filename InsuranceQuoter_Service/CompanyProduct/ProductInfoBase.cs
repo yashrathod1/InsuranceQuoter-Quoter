@@ -20,17 +20,25 @@ public abstract class ProductInfoBase : IProductInfo
     public abstract decimal MinimumFaceAmount { get; }
     public abstract decimal MaximumFaceAmount { get; }
     public abstract List<string> ExcludedStates { get; }
-    public virtual bool SupportsChildRider => MinChildRiderAmount.HasValue && MaxChildRiderAmount.HasValue;
-    public virtual bool SupportsWopRider => false;
-    public virtual bool SupportsAdbRider => false;
-    public virtual decimal? MinChildRiderAmount => null;
-    public virtual decimal? MaxChildRiderAmount => null;
     public bool IsTermAllowed(int Term) => AllowedTerms.Contains(Term);
 
     protected string BasePath => Path.Combine(AppContext.BaseDirectory, @"..\..\..\..\InsuranceQuoter_Service\company");
 
     public bool IsFaceAmountAllowed(decimal faceAmount)
         => faceAmount >= MinimumFaceAmount && faceAmount <= MaximumFaceAmount;
+
+    public virtual Dictionary<string, RiderRuleViewModel> RiderRules => new();
+
+    public RiderRuleViewModel? GetRiderRule(string riderName)
+        => RiderRules.TryGetValue(riderName, out var rule) ? rule : null;
+
+    public virtual bool SupportsChildRider => RiderRules.TryGetValue("Child Rider", out var rule) && rule.IsAvailable;
+    public virtual bool SupportsWopRider => RiderRules.TryGetValue("Waiver of Premium", out var rule) && rule.IsAvailable;
+    public virtual bool SupportsAdbRider => RiderRules.TryGetValue("ADB Rider", out var rule) && rule.IsAvailable;
+
+    public virtual Task<int?> GetWopMaxIssueAgeAsync(RiderSearchViewModel
+     input)
+        => Task.FromResult<int?>(null);
 
     public int CalculateAge(DateOnly dob)
     {

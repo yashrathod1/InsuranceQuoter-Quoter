@@ -181,62 +181,76 @@ public class QuoterService : IQuoterService
                 RiderAmount = input.ChildRiderAmount,
             };
 
-
             // 6. Child Rider validation
             if (input.ChildRiderAmount is > 0)
             {
-                if (!product.SupportsChildRider)
+                var childRiderRule = product.GetRiderRule("Child Rider");
+                if (childRiderRule == null || !childRiderRule.IsAvailable)
                 {
-                    errors.Add($"{product.CompanyName} does not support Child Rider.");
+                    errors.Add($"{product.CompanyName} does not support the Child Rider.");
                 }
                 else
                 {
-                    if (product.MinChildRiderAmount.HasValue && product.MaxChildRiderAmount.HasValue)
+                    if (childRiderRule.MinAmount.HasValue && childRiderRule.MaxAmount.HasValue)
                     {
-                        if (input.ChildRiderAmount < product.MinChildRiderAmount || input.ChildRiderAmount > product.MaxChildRiderAmount)
+                        if (input.ChildRiderAmount < childRiderRule.MinAmount || input.ChildRiderAmount > childRiderRule.MaxAmount)
                         {
-                            errors.Add($"ChildRiderAmount must be between {product.MinChildRiderAmount} and {product.MaxChildRiderAmount} for {product.CompanyName}.");
+                            errors.Add($"Child Rider amount must be between {childRiderRule.MinAmount} and {childRiderRule.MaxAmount}.");
                         }
+                    }
+
+                    if (childRiderRule.MaxIssueAge.HasValue && age > childRiderRule.MaxIssueAge.Value)
+                    {
+                        errors.Add($"Child Rider is allowed up to age {childRiderRule.MaxIssueAge.Value}.");
                     }
 
                     var crRate = await product.LoadCrRiderRateAsync(riderSearch);
                     if (!crRate.HasValue)
                     {
-                        errors.Add($"Child Rider rate not found for {product.CompanyName}.");
+                        errors.Add($"Child Rider rate not available for {product.CompanyName}.");
                     }
                 }
             }
-
-            // 7. WOP Rider validation
+            // 7. Waiver of Premium (WOP) Rider validation
             if (input.WOP)
             {
-                if (!product.SupportsWopRider)
+                var wopRule = product.GetRiderRule("Waiver of Premium");
+                if (wopRule == null || !wopRule.IsAvailable)
                 {
-                    errors.Add($"{product.CompanyName} does not support WOP Rider.");
+                    errors.Add($"{product.CompanyName} does not support the Waiver of Premium Rider.");
                 }
                 else
                 {
-                    var wopRate = await product.LoadWopRiderRateAsync(riderSearch);
-                    if (!wopRate.HasValue)
+                    int? maxWopAge = wopRule.IsSheetBasedMaxAge
+                        ? await product.GetWopMaxIssueAgeAsync(riderSearch)
+                        : wopRule.MaxIssueAge;
+
+                    if (maxWopAge.HasValue && age > maxWopAge.Value)
                     {
-                        errors.Add($"WOP Rider is not available for Age {age}, Term {input.Term}, TobaccoUse: {input.TobaccoUse} in {product.CompanyName}.");
+                        errors.Add($"Waiver of Premium Rider is allowed up to age {maxWopAge.Value} for term {input.Term}.");
                     }
                 }
             }
 
-            // 8. ADB Rider validation
+            // 8. Accidental Death Benefit (ADB) Rider validation
             if (input.ADB)
             {
-                if (!product.SupportsAdbRider)
+                var adbRule = product.GetRiderRule("ADB Rider");
+                if (adbRule == null || !adbRule.IsAvailable)
                 {
-                    errors.Add($"{product.CompanyName} does not support ADB Rider.");
+                    errors.Add($"{product.CompanyName} does not support the ADB Rider.");
                 }
                 else
                 {
+                    if (adbRule.MaxIssueAge.HasValue && age > adbRule.MaxIssueAge.Value)
+                    {
+                        errors.Add($"ADB Rider is allowed up to age {adbRule.MaxIssueAge.Value}.");
+                    }
+
                     var adbRate = await product.LoadAdbRiderRateAsync(riderSearch);
                     if (!adbRate.HasValue)
                     {
-                        errors.Add($"ADB Rider is not available for Age {age}, Term {input.Term}, Gender: {input.Gender} in {product.CompanyName}.");
+                        errors.Add($"ADB Rider rate not available for {product.CompanyName}.");
                     }
                 }
             }
@@ -253,18 +267,11 @@ public class QuoterService : IQuoterService
     #endregion
 
     #region QuoteCalculation
-    public async Task<QuoteResultVIewModel?> GetQuoteAsync(UserInputViewModel input)
+    private async Task<QuoteResultVIewModel?> BuildQuoteAsync(UserInputViewModel input, ProductInfoBase product, int age)
     {
-        ProductInfoBase product = ProductInfoFactory.GetProductInfo(input.CompanyName);
-        int age = product.CalculateAge(input.DateOfBirth);
-
-        var errors = await ValidateInput(input, product, age);
-        if (errors.Any())
-            throw new ValidationErrorsException(errors);
-
         var rateRow = await product.LoadBaseRateAsync(new RateSearchViewModel
         {
-            CompanyName = input.CompanyName,
+            CompanyName = product.CompanyName,
             Term = input.Term,
             Age = age,
             Gender = input.Gender,
@@ -287,7 +294,6 @@ public class QuoterService : IQuoterService
 
         decimal riderPremium = 0;
 
-        // WOP Rider
         if (input.WOP)
         {
             var wopRate = await product.LoadWopRiderRateAsync(riderInput);
@@ -295,7 +301,6 @@ public class QuoterService : IQuoterService
                 riderPremium += product.CalculateWopPremium(input.FaceAmount, wopRate.Value);
         }
 
-        // Child Rider
         if (input.ChildRiderAmount is > 0)
         {
             var crRate = await product.LoadCrRiderRateAsync(riderInput);
@@ -303,12 +308,11 @@ public class QuoterService : IQuoterService
                 riderPremium += product.CalculateCrPremium(input.ChildRiderAmount.Value, crRate.Value);
         }
 
-        // ADB Rider (optional, if supported)
-        if (input.ADB) // Assuming you add this in your input model
+        if (input.ADB)
         {
             var adbRate = await product.LoadAdbRiderRateAsync(riderInput);
             if (adbRate.HasValue)
-                riderPremium += product.CalculateCrPremium(input.FaceAmount, adbRate.Value); // Assuming similar calc
+                riderPremium += product.CalculateCrPremium(input.FaceAmount, adbRate.Value);
         }
 
         decimal baseAnnual = product.CalculateBaseAnnualPremium(input.FaceAmount, rateRow.RatePerThousand);
@@ -328,6 +332,116 @@ public class QuoterService : IQuoterService
             AnnualPremium = annualPremium,
             MonthlyPremium = monthlyPremium
         };
+    }
+
+    public async Task<List<QuoteResultVIewModel>> GetQuoteAsync(UserInputViewModel input)
+    {
+        var results = new List<QuoteResultVIewModel>();
+
+        if (!string.IsNullOrWhiteSpace(input.CompanyName))
+        {
+            var product = ProductInfoFactory.GetProductInfo(input.CompanyName);
+            int age = product.CalculateAge(input.DateOfBirth);
+
+            var validationErrors = await ValidateInput(input, product, age);
+            if (validationErrors.Any())
+                throw new ValidationErrorsException(validationErrors);
+
+            var quote = await BuildQuoteAsync(input, product, age);
+            if (quote != null)
+                results.Add(quote);
+        }
+        else
+        {
+            foreach (var product in ProductInfoFactory.GetAllProducts())
+            {
+                // Clone to avoid modifying original input
+                var clonedInput = new UserInputViewModel
+                {
+                    CompanyName = product.CompanyName,
+                    DateOfBirth = input.DateOfBirth,
+                    Gender = input.Gender,
+                    State = input.State,
+                    Term = input.Term,
+                    FaceAmount = input.FaceAmount,
+                    HealthClass = input.HealthClass,
+                    TobaccoUse = input.TobaccoUse,
+                    WOP = input.WOP,
+                    ADB = input.ADB,
+                    ChildRiderAmount = input.ChildRiderAmount
+                };
+
+                int age = product.CalculateAge(clonedInput.DateOfBirth);
+                var validationErrors = await ValidateInput(clonedInput, product, age);
+
+                if (!validationErrors.Any())
+                {
+                    var quote = await BuildQuoteAsync(clonedInput, product, age);
+                    if (quote != null)
+                        results.Add(quote);
+                }
+                else
+                {
+                    Console.WriteLine($"Skipping {product.CompanyName} due to validation errors: {string.Join(" | ", validationErrors)}");
+                }
+            }
+
+            if (!results.Any())
+            {
+                throw new ValidationErrorsException(new List<string>
+            {
+                "No products match the given criteria."
+            });
+            }
+        }
+
+        // else
+        // {
+        //     var allValidationErrors = new List<string>();
+
+        //     foreach (var product in ProductInfoFactory.GetAllProducts())
+        //     {
+        //         // Clone to avoid modifying original input
+        //         var clonedInput = new UserInputViewModel
+        //         {
+        //             CompanyName = product.CompanyName,
+        //             DateOfBirth = input.DateOfBirth,
+        //             Gender = input.Gender,
+        //             State = input.State,
+        //             Term = input.Term,
+        //             FaceAmount = input.FaceAmount,
+        //             HealthClass = input.HealthClass,
+        //             TobaccoUse = input.TobaccoUse,
+        //             WOP = input.WOP,
+        //             ADB = input.ADB,
+        //             ChildRiderAmount = input.ChildRiderAmount
+        //         };
+
+        //         int age = product.CalculateAge(clonedInput.DateOfBirth);
+        //         var validationErrors = await ValidateInput(clonedInput, product, age);
+
+        //         if (!validationErrors.Any())
+        //         {
+        //             var quote = await BuildQuoteAsync(clonedInput, product, age);
+        //             if (quote != null)
+        //                 results.Add(quote);
+        //         }
+        //         else
+        //         {
+        //             allValidationErrors.Add($"[{product.CompanyName}] - {string.Join(" | ", validationErrors)}");
+        //         }
+        //     }
+
+        //     if (!results.Any())
+        //     {
+        //         throw new ValidationErrorsException(allValidationErrors.Any()
+        //             ? allValidationErrors
+        //             : new List<string> { "No products match the given criteria." });
+        //     }
+        // }
+
+
+        return results;
     }
 
     #endregion

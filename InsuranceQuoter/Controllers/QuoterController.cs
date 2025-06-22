@@ -40,7 +40,7 @@ public class QuoterController : Controller
                 return BadRequest(ModelState);
             }
 
-            QuoteResultVIewModel? result = await _quoterService.GetQuoteAsync(input);
+            List<QuoteResultVIewModel> result = await _quoterService.GetQuoteAsync(input);
 
             if (result == null)
                 return NotFound("No valid quote found for the given inputs.");

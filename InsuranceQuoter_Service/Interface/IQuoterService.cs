@@ -5,6 +5,5 @@ namespace InsuranceQuoter_Service.Interface;
 
 public interface IQuoterService
 {
-    Task<QuoteResultVIewModel?> GetQuoteAsync(UserInputViewModel input);
-    
+    Task<List<QuoteResultVIewModel>> GetQuoteAsync(UserInputViewModel input);
 }

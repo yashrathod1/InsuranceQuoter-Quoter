@@ -21,9 +21,6 @@ public class ICICIProductInfo : ProductInfoBase
     public override List<int> AllowedTerms => new() { 10, 15, 20, 25, 30, 40 };
     public override decimal MinimumFaceAmount => 100000;
     public override decimal MaximumFaceAmount => 10000000;
-    public override decimal? MinChildRiderAmount => 5000;
-    public override decimal? MaxChildRiderAmount => 10000;
-    public override bool SupportsWopRider => true;
 
     #region GenerateCsv
     protected override async Task GenerateWopRateCsvAsync(IFormFile excelFile, string companyFolder)
@@ -164,6 +161,47 @@ public class ICICIProductInfo : ProductInfoBase
         }
 
         return null;
+    }
+
+    public override Dictionary<string, RiderRuleViewModel> RiderRules => new()
+    {
+        ["Waiver of Premium"] = new RiderRuleViewModel
+        {
+            RiderName = "Waiver of Premium",
+            IsAvailable = true,
+            IsSheetBasedMaxAge = true,
+        },
+        ["Child Rider"] = new RiderRuleViewModel
+        {
+            RiderName = "Child Rider",
+            IsAvailable = true,
+            MaxIssueAge = 55,
+            MinAmount = 5000,
+            MaxAmount = 10000
+        }
+    };
+
+    public override async Task<int?> GetWopMaxIssueAgeAsync(RiderSearchViewModel input)
+    {
+        string path = Path.Combine(BasePath, CompanyName.ToLower(), $"{CompanyName.ToLower()}_wop_rates.csv");
+        if (!File.Exists(path)) return null;
+
+        using var reader = new StreamReader(path);
+        using var csv = new CsvReader(reader, CultureInfo.InvariantCulture);
+        await csv.ReadAsync(); csv.ReadHeader();
+
+        var ages = new List<int>();
+        while (await csv.ReadAsync())
+        {
+            int term = csv.GetField<int>("Term");
+            int age = csv.GetField<int>("Age");
+            bool tob = csv.GetField<bool>("TobaccoUse");
+
+            if (term == input.Term && tob == input.TobaccoUse)
+                ages.Add(age);
+        }
+
+        return ages.Any() ? ages.Max() : null;
     }
 
 
