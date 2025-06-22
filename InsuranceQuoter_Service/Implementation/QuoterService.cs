@@ -6,6 +6,7 @@ using InsuranceQuoter_Service.CompanyProduct;
 using InsuranceQuoter_Service.Exceptions;
 using InsuranceQuoter_Service.Interface;
 using InsuranceQuoter_Service.ViewModels;
+using InsuranceQuoter_Service.ViewModels.Base;
 using Microsoft.AspNetCore.Http;
 using OfficeOpenXml;
 
@@ -134,7 +135,8 @@ public class QuoterService : IQuoterService
             string originalHealthClass = input.HealthClass;
             if (!product.TryNormalizeHealthClass(originalHealthClass, input.TobaccoUse, out string? normalizedHealthClass))
             {
-                errors.Add($"Invalid HealthClass '{originalHealthClass}' Allowed: PP, P, RP, R");
+                string tobaccoText = input.TobaccoUse ? "with Tobacco Use" : "with No Tobacco Use";
+                errors.Add($"The combination of HealthClass '{originalHealthClass}' {tobaccoText} is not allowed for {product.CompanyName}.");
             }
             else
             {
@@ -170,48 +172,76 @@ public class QuoterService : IQuoterService
             if (!product.IsFaceAmountAllowed(input.FaceAmount))
                 errors.Add($"Face amount must be between {product.MinimumFaceAmount} and {product.MaximumFaceAmount}");
 
-            //6 Child Rider validation
-            if (input.ChildRiderAmount.HasValue && input.ChildRiderAmount.Value > 0)
+            var riderSearch = new RiderSearchViewModel
+            {
+                Age = age,
+                Term = input.Term,
+                Gender = input.Gender,
+                TobaccoUse = input.TobaccoUse,
+                RiderAmount = input.ChildRiderAmount,
+            };
+
+
+            // 6. Child Rider validation
+            if (input.ChildRiderAmount is > 0)
             {
                 if (!product.SupportsChildRider)
                 {
                     errors.Add($"{product.CompanyName} does not support Child Rider.");
                 }
-                else if (product.MinChildRiderAmount.HasValue && product.MaxChildRiderAmount.HasValue)
+                else
                 {
-                    if (input.ChildRiderAmount < product.MinChildRiderAmount || input.ChildRiderAmount > product.MaxChildRiderAmount)
+                    if (product.MinChildRiderAmount.HasValue && product.MaxChildRiderAmount.HasValue)
                     {
-                        errors.Add($"ChildRiderAmount must be between {product.MinChildRiderAmount} and {product.MaxChildRiderAmount} for {product.CompanyName}.");
+                        if (input.ChildRiderAmount < product.MinChildRiderAmount || input.ChildRiderAmount > product.MaxChildRiderAmount)
+                        {
+                            errors.Add($"ChildRiderAmount must be between {product.MinChildRiderAmount} and {product.MaxChildRiderAmount} for {product.CompanyName}.");
+                        }
+                    }
+
+                    var crRate = await product.LoadCrRiderRateAsync(riderSearch);
+                    if (!crRate.HasValue)
+                    {
+                        errors.Add($"Child Rider rate not found for {product.CompanyName}.");
                     }
                 }
-
-                decimal? crRate = await LoadCRRiderRateAsync(input.CompanyName);
-                if (crRate == null)
-                    errors.Add($"Child Rider rate not found for company {input.CompanyName}.");
             }
 
-            //7 WOP Rider validation
+            // 7. WOP Rider validation
             if (input.WOP)
             {
-                string filePath = Path.Combine(AppContext.BaseDirectory, @"..\..\..\..\InsuranceQuoter_Service", "company", input.CompanyName.ToLower(), $"{input.CompanyName.ToLower()}_wop_rates.csv");
-                if (!File.Exists(filePath))
+                if (!product.SupportsWopRider)
                 {
-                    errors.Add($"WOP Rider not supported by {product.CompanyName}.");
+                    errors.Add($"{product.CompanyName} does not support WOP Rider.");
                 }
                 else
                 {
-                    IciciWopRiderRateRowVIewModel? wopMatch = await LoadAndFindRiderRateAsync(new IciciWopRiderRateSearchViewModel
+                    var wopRate = await product.LoadWopRiderRateAsync(riderSearch);
+                    if (!wopRate.HasValue)
                     {
-                        CompanyName = input.CompanyName,
-                        Age = age,
-                        Term = input.Term,
-                        TobaccoUse = input.TobaccoUse
-                    });
-
-                    if (wopMatch == null)
-                        errors.Add($"WOP Rider is not available for Age {age}, Term {input.Term}, TobaccoUse: {input.TobaccoUse}.");
+                        errors.Add($"WOP Rider is not available for Age {age}, Term {input.Term}, TobaccoUse: {input.TobaccoUse} in {product.CompanyName}.");
+                    }
                 }
             }
+
+            // 8. ADB Rider validation
+            if (input.ADB)
+            {
+                if (!product.SupportsAdbRider)
+                {
+                    errors.Add($"{product.CompanyName} does not support ADB Rider.");
+                }
+                else
+                {
+                    var adbRate = await product.LoadAdbRiderRateAsync(riderSearch);
+                    if (!adbRate.HasValue)
+                    {
+                        errors.Add($"ADB Rider is not available for Age {age}, Term {input.Term}, Gender: {input.Gender} in {product.CompanyName}.");
+                    }
+                }
+            }
+
+
             return errors;
         }
         catch (Exception ex)
@@ -226,13 +256,13 @@ public class QuoterService : IQuoterService
     public async Task<QuoteResultVIewModel?> GetQuoteAsync(UserInputViewModel input)
     {
         ProductInfoBase product = ProductInfoFactory.GetProductInfo(input.CompanyName);
-
         int age = product.CalculateAge(input.DateOfBirth);
+
         var errors = await ValidateInput(input, product, age);
         if (errors.Any())
             throw new ValidationErrorsException(errors);
 
-        RateRowViewModel? rateRow = await product.LoadBaseRateAsync(new RateSearchViewModel
+        var rateRow = await product.LoadBaseRateAsync(new RateSearchViewModel
         {
             CompanyName = input.CompanyName,
             Term = input.Term,
@@ -245,20 +275,40 @@ public class QuoterService : IQuoterService
         if (rateRow == null)
             return null;
 
+        var riderInput = new RiderSearchViewModel
+        {
+            Age = age,
+            Term = input.Term,
+            Gender = input.Gender,
+            TobaccoUse = input.TobaccoUse,
+            RiderAmount = input.ChildRiderAmount,
+            State = input.State
+        };
+
         decimal riderPremium = 0;
 
+        // WOP Rider
         if (input.WOP)
         {
-            var wopRate = await product.LoadWopRiderRateAsync(age, input.Term, input.TobaccoUse);
+            var wopRate = await product.LoadWopRiderRateAsync(riderInput);
             if (wopRate.HasValue)
                 riderPremium += product.CalculateWopPremium(input.FaceAmount, wopRate.Value);
         }
 
-        if (input.ChildRiderAmount.HasValue && input.ChildRiderAmount.Value > 0)
+        // Child Rider
+        if (input.ChildRiderAmount is > 0)
         {
-            var crRate = await product.LoadCrRiderRateAsync();
+            var crRate = await product.LoadCrRiderRateAsync(riderInput);
             if (crRate.HasValue)
                 riderPremium += product.CalculateCrPremium(input.ChildRiderAmount.Value, crRate.Value);
+        }
+
+        // ADB Rider (optional, if supported)
+        if (input.ADB) // Assuming you add this in your input model
+        {
+            var adbRate = await product.LoadAdbRiderRateAsync(riderInput);
+            if (adbRate.HasValue)
+                riderPremium += product.CalculateCrPremium(input.FaceAmount, adbRate.Value); // Assuming similar calc
         }
 
         decimal baseAnnual = product.CalculateBaseAnnualPremium(input.FaceAmount, rateRow.RatePerThousand);
@@ -278,40 +328,6 @@ public class QuoterService : IQuoterService
             AnnualPremium = annualPremium,
             MonthlyPremium = monthlyPremium
         };
-    }
-
-    public async Task<List<MultipleQuoteResultViewModel>> GetQuotesForMultipleCompaniesAsync(UserInputViewModel input)
-    {
-
-        List<MultipleQuoteResultViewModel> results = new();
-        string[]? companyList = input.CompanyName.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-
-        foreach (string company in companyList)
-        {
-            UserInputViewModel? clonedInput = JsonSerializer.Deserialize<UserInputViewModel>(
-                JsonSerializer.Serialize(input)
-            );
-
-            clonedInput!.CompanyName = company;
-
-            MultipleQuoteResultViewModel response = new() { CompanyName = company.ToUpper() };
-            try
-            {
-                QuoteResultVIewModel? quote = await GetQuoteAsync(clonedInput);
-                response.Quote = quote;
-            }
-            catch (CompanyNotFoundException ex)
-            {
-                response.Errors.Add(ex.Message);
-            }
-            catch (ValidationErrorsException ex)
-            {
-                response.Errors.AddRange(ex.Errors);
-            }
-
-            results.Add(response);
-        }
-        return results;
     }
 
     #endregion

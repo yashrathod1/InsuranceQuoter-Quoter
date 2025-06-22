@@ -3,6 +3,7 @@ using System.Text;
 using CsvHelper;
 using InsuranceQuoter_Service.CompanyProduct;
 using InsuranceQuoter_Service.ViewModels;
+using InsuranceQuoter_Service.ViewModels.Base;
 using InsuranceQuoter_Service.ViewModels.HDFC;
 using Microsoft.AspNetCore.Http;
 using OfficeOpenXml;
@@ -21,7 +22,12 @@ public class HDFCProductInfo : ProductInfoBase
     public override List<int> AllowedTerms => new() { 10, 15, 20, 25, 30, 35 };
     public override decimal MinimumFaceAmount => 100000;
     public override decimal MaximumFaceAmount => 100000000;
+    public override decimal? MinChildRiderAmount => 1000;
+    public override decimal? MaxChildRiderAmount => 25000;
+    public override bool SupportsWopRider => true;
+    public override bool SupportsAdbRider => true;
 
+    #region GenerateCsv
     protected override async Task GenerateWopRateCsvAsync(IFormFile excelFile, string companyFolder)
     {
         try
@@ -158,4 +164,41 @@ public class HDFCProductInfo : ProductInfoBase
             throw new Exception("Error in generating the ABD CSV", ex);
         }
     }
+
+    #endregion
+
+    #region ReadCsv
+
+    private async Task<decimal?> LoadRiderRateByAgeAsync(string fileName, int age)
+    {
+        string path = Path.Combine(BasePath, CompanyName.ToLower(), fileName);
+
+        if (!File.Exists(path))
+            return null;
+
+        using var reader = new StreamReader(path);
+        using var csv = new CsvReader(reader, CultureInfo.InvariantCulture);
+        await csv.ReadAsync();
+        csv.ReadHeader();
+
+        while (await csv.ReadAsync())
+        {
+            int recordAge = csv.GetField<int>("Age");
+            if (recordAge == age)
+                return csv.GetField<decimal>("RatePerThousand");
+        }
+
+        return null;
+    }
+
+    public override Task<decimal?> LoadWopRiderRateAsync(RiderSearchViewModel input)
+        => LoadRiderRateByAgeAsync("hdfc_wop_rates.csv", input.Age);
+
+    public override Task<decimal?> LoadCrRiderRateAsync(RiderSearchViewModel input)
+        => LoadRiderRateByAgeAsync("hdfc_cr_rates.csv", input.Age);
+
+    public override Task<decimal?> LoadAdbRiderRateAsync(RiderSearchViewModel input)
+        => LoadRiderRateByAgeAsync("hdfc_adb_rates.csv", input.Age);
+
+    #endregion
 }

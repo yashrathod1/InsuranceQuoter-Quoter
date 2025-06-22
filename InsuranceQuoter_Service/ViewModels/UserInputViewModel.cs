@@ -15,7 +15,7 @@ public class UserInputViewModel
     public string Gender { get; set; } = null!;
 
     [Required(ErrorMessage = "State is Required")]
-    public string State { get; set; } = null!;
+    public string State { get; set; } = string.Empty;
 
     [Required(ErrorMessage = "Term is Required")]
     public int Term { get; set; }
@@ -31,5 +31,7 @@ public class UserInputViewModel
     
     public bool WOP { get; set; }
     
-    public decimal? ChildRiderAmount { get; set;}
+    public bool ADB { get; set;  }
+    
+    public decimal? ChildRiderAmount { get; set; }
 }

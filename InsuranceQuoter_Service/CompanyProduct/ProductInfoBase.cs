@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using CsvHelper;
 using InsuranceQuoter_Service.ViewModels;
+using InsuranceQuoter_Service.ViewModels.Base;
 using Microsoft.AspNetCore.Http;
 using OfficeOpenXml;
 
@@ -20,6 +21,8 @@ public abstract class ProductInfoBase : IProductInfo
     public abstract decimal MaximumFaceAmount { get; }
     public abstract List<string> ExcludedStates { get; }
     public virtual bool SupportsChildRider => MinChildRiderAmount.HasValue && MaxChildRiderAmount.HasValue;
+    public virtual bool SupportsWopRider => false;
+    public virtual bool SupportsAdbRider => false;
     public virtual decimal? MinChildRiderAmount => null;
     public virtual decimal? MaxChildRiderAmount => null;
     public bool IsTermAllowed(int Term) => AllowedTerms.Contains(Term);
@@ -80,8 +83,9 @@ public abstract class ProductInfoBase : IProductInfo
 
         return null;
     }
-    public virtual Task<decimal?> LoadWopRiderRateAsync(int age, int term, bool tobaccoUse) => Task.FromResult<decimal?>(null);
-    public virtual Task<decimal?> LoadCrRiderRateAsync() => Task.FromResult<decimal?>(null);
+    public virtual Task<decimal?> LoadWopRiderRateAsync(RiderSearchViewModel input) => Task.FromResult<decimal?>(null);
+    public virtual Task<decimal?> LoadCrRiderRateAsync(RiderSearchViewModel input) => Task.FromResult<decimal?>(null);
+    public virtual Task<decimal?> LoadAdbRiderRateAsync(RiderSearchViewModel input) => Task.FromResult<decimal?>(null);
 
     #endregion
 

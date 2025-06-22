@@ -3,6 +3,7 @@ using System.Text;
 using CsvHelper;
 using InsuranceQuoter_Service.CompanyProduct;
 using InsuranceQuoter_Service.ViewModels;
+using InsuranceQuoter_Service.ViewModels.Base;
 using Microsoft.AspNetCore.Http;
 using OfficeOpenXml;
 
@@ -22,6 +23,7 @@ public class ICICIProductInfo : ProductInfoBase
     public override decimal MaximumFaceAmount => 10000000;
     public override decimal? MinChildRiderAmount => 5000;
     public override decimal? MaxChildRiderAmount => 10000;
+    public override bool SupportsWopRider => true;
 
     #region GenerateCsv
     protected override async Task GenerateWopRateCsvAsync(IFormFile excelFile, string companyFolder)
@@ -115,5 +117,55 @@ public class ICICIProductInfo : ProductInfoBase
 
     #endregion
 
+    #region ReadCsv
 
+    public override async Task<decimal?> LoadWopRiderRateAsync(RiderSearchViewModel input)
+    {
+        string path = Path.Combine(BasePath, CompanyName.ToLower(), $"{CompanyName.ToLower()}_wop_rates.csv");
+
+        if (!File.Exists(path))
+            return null;
+
+        using var reader = new StreamReader(path);
+        using var csv = new CsvReader(reader, CultureInfo.InvariantCulture);
+        await csv.ReadAsync();
+        csv.ReadHeader();
+
+        while (await csv.ReadAsync())
+        {
+            int term = csv.GetField<int>("Term");
+            int age = csv.GetField<int>("Age");
+            bool tobacco = csv.GetField<bool>("TobaccoUse");
+
+            if (term == input.Term && age == input.Age && tobacco == input.TobaccoUse)
+            {
+                return csv.GetField<decimal>("RatePerThousand");
+            }
+        }
+
+        return null; // not found
+    }
+
+    public override async Task<decimal?> LoadCrRiderRateAsync(RiderSearchViewModel input)
+    {
+        string path = Path.Combine(BasePath, CompanyName.ToLower(), $"{CompanyName.ToLower()}_cr_rates.csv");
+
+        if (!File.Exists(path))
+            return null;
+
+        using var reader = new StreamReader(path);
+        using var csv = new CsvReader(reader, CultureInfo.InvariantCulture);
+        await csv.ReadAsync();
+        csv.ReadHeader();
+
+        if (await csv.ReadAsync())
+        {
+            return csv.GetField<decimal>("RatePerThousand");
+        }
+
+        return null;
+    }
+
+
+    #endregion
 }
